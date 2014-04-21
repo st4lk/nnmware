@@ -4,3 +4,4 @@
 nnmware.db
 secret.txt
 settings_local.py
+__pycache__/
