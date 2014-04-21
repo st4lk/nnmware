@@ -1,0 +1,10 @@
+Django>=1.4
+django-grappelli==2.5.3
+Pillow==2.4.0
+oauth2==1.5.211
+python-openid==2.2.5
+reportlab==3.0
+South==0.8.4
+Unidecode==0.04.14
+xlwt==0.7.5
+BeautifulSoup==3.2.1

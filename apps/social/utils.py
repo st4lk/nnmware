@@ -185,3 +185,11 @@ def dsa_urlopen(*args, **kwargs):
     if timeout and 'timeout' not in kwargs:
         kwargs['timeout'] = timeout
     return urlopen(*args, **kwargs)
+
+
+def get_random_string(length):
+    raise NotImplementedError()
+
+
+def constant_time_compare(*args, **kwargs):
+    raise NotImplementedError()
