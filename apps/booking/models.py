@@ -5,7 +5,7 @@ from uuid import uuid4
 import random
 from django.db import models
 from django.conf import settings
-from django.db.models import permalink, signals, Avg, Min
+from django.db.models import permalink, signals, Avg, Min, Sum
 from django.db.models.manager import Manager
 from django.template.defaultfilters import date
 from django.utils.timezone import now
@@ -13,6 +13,7 @@ from django.utils.translation import ugettext_lazy as _, string_concat
 from django.utils.translation.trans_real import get_language
 from django.utils.encoding import python_2_unicode_compatible
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from nnmware.apps.address.models import AbstractGeo, Tourism, City
 from nnmware.apps.money.models import MoneyBase
 from nnmware.core.abstract import AbstractIP, AbstractName, AbstractDate
@@ -399,6 +400,15 @@ class Room(AbstractName):
     def min_current_amount(self):
         return self.amount_on_date(now())
 
+    def get_price(self, date_in, date_out, guests):
+        """
+        Return price without discount. None means room is not avaliable.
+        """
+        pp = PlacePrice.objects.filter(settlement__room=self,
+            settlement__enabled=True, settlement__settlement=guests,
+            date__gte=date_in, date__lt=date_out)
+        return pp.aggregate(total_amount=Sum('amount'))['total_amount']
+
     def amount_on_date(self, on_date, guests=None):
         result = PlacePrice.objects.filter(settlement__room=self, settlement__enabled=True, date=on_date).\
             aggregate(Min('amount'))
@@ -447,7 +457,9 @@ class Room(AbstractName):
 @python_2_unicode_compatible
 class SettlementVariant(models.Model):
     room = models.ForeignKey(Room, verbose_name=_('Room'))
+    # TODO probably index can be removed
     settlement = models.PositiveSmallIntegerField(_("Settlement"), db_index=True)
+    # TODO probably index can be removed
     enabled = models.BooleanField(verbose_name=_('Enabled'), default=True, db_index=True)
 
     class Meta:
@@ -741,6 +753,12 @@ class PlacePrice(MoneyBase):
             "Price settlement %(settlement)s for hotel %(hotel)s on date %(date)s is -> %(price)s %(currency)s") % dict(
                 settlement=self.settlement.settlement, hotel=self.settlement.room.hotel.name, date=self.date,
                 price=self.amount, currency=self.currency.code)
+
+    def clean(self, exclude=None):
+        if PlacePrice.objects.filter(settlement=self.settlement,
+                date=self.date).exists():
+            raise ValidationError(_("Price for given room, settlement, date "
+                "already exists"))
 
     def save(self, *args, **kwargs):
         cache.delete('hotel_prices')
