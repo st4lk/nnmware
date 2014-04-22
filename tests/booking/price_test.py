@@ -77,17 +77,21 @@ class PriceTestCase(BasePriceTestCase):
 class DiscountTestCase(BasePriceTestCase):
     def setUp(self):
         super(DiscountTestCase, self).setUp()
-        self.dnorm = mommy.make('booking.Discount', choice=DISCOUNT_NORMAL,
-            hotel=self.hotel)
+        self.disc_norm = mommy.make('booking.Discount', choice=DISCOUNT_NORMAL,
+            hotel=self.hotel, apply_norefund=True, apply_creditcard=True)
+        self.disc_norfd = mommy.make('booking.Discount', choice=DISCOUNT_NOREFUND,
+            hotel=self.hotel, percentage=False)
+        self.disc_card = mommy.make('booking.Discount', choice=DISCOUNT_CREDITCARD,
+            hotel=self.hotel, percentage=True)
         discounts = {
             self.day1: [
-                dict(discount=self.dnorm, value=25),
+                dict(discount=self.disc_norm, value=25),
             ],
             self.day2: [
-                dict(discount=self.dnorm, value=15),
+                dict(discount=self.disc_norm, value=15),
             ],
             self.day3: [
-                dict(discount=self.dnorm, value=10),
+                dict(discount=self.disc_norm, value=10),
             ],
         }
         for date, d_list in discounts.items():
@@ -95,14 +99,43 @@ class DiscountTestCase(BasePriceTestCase):
                 mommy.make('booking.RoomDiscount', date=date,
                     room=self.room, **d_kwargs)
 
-    def test_normal_d1(self):
+    def create_additional_discount(self, discount, mp):
+        for date, value in (mp):
+            mommy.make('booking.RoomDiscount', date=date,
+                room=self.room, discount=discount, value=value)
+
+    def test_normal_d1_g1(self):
         prices = self.room.get_price_discount(self.day1, self.day2, 1)
         self.assertEqual(prices, [D('7.5'), D('7.5'), D('7.5')])
 
-    def test_normal_d2(self):
+    def test_normal_d2_g1(self):
         prices = self.room.get_price_discount(self.day1, self.day3, 1)
         self.assertEqual(prices, [D('16.85'), D('16.85'), D('16.85')])
 
-    def test_normal_d3(self):
+    def test_normal_d3_g1(self):
         prices = self.room.get_price_discount(self.day1, self.day4, 1)
         self.assertEqual(prices, [D('29.45'), D('29.45'), D('29.45')])
+
+    def test_normal_d3_g2(self):
+        prices = self.room.get_price_discount(self.day1, self.day4, 2)
+        self.assertEqual(prices, [D('34.95'), D('34.95'), D('34.95')])
+
+    def test_normal_d3_g3(self):
+        prices = self.room.get_price_discount(self.day1, self.day4, 3)
+        self.assertEqual(prices, None)
+
+    def test_normal_d2_g2_norefund(self):
+        mp = (self.day1, D('0.5')), (self.day2, D('0.6'))
+        self.create_additional_discount(self.disc_norfd, mp)
+        prices = self.room.get_price_discount(self.day1, self.day3, 2)
+        self.assertEqual(prices, [D('21.45'), D('20.35'), D('21.45')])
+
+    def test_normal_d2_g2_norefund_card(self):
+        # NOREFUND discount
+        mp = (self.day1, D('0.5')), (self.day2, D('0.6'))
+        self.create_additional_discount(self.disc_norfd, mp)
+        # CREDITCARD discount
+        mp = (self.day1, D('5')), (self.day2, D('7'))
+        self.create_additional_discount(self.disc_card, mp)
+        prices = self.room.get_price_discount(self.day1, self.day3, 2)
+        self.assertEqual(prices, [D('21.45'), D('20.35'), D('20.1735')])

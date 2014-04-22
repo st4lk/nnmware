@@ -473,12 +473,12 @@ class Room(AbstractName):
         return price_disc[0] - price_disc[1]
 
     @classmethod
-    def count_discount_sum(cls, is_percentage, p_list, d_list):
+    def apply_discount_for_days(cls, is_percentage, p_list, d_list):
         func = cls.d_percentage if is_percentage else cls.d_amout
-        return sum(map(func, zip(p_list, d_list)))
+        return map(func, zip(p_list, d_list))
 
-    def apply_discount_group1(self, mp, discount, sm, check_applicable=True):
-        if check_applicable:
+    def apply_discount_group1(self, mp, discount, sm, day_prices, check_apply=True):
+        if check_apply:
             apply_nrf = discount.apply_norefund
             apply_crd = discount.apply_creditcard
         else:
@@ -487,8 +487,9 @@ class Room(AbstractName):
                 (DISCOUNT_CREDITCARD, apply_crd)]:
             if is_apply and dtype_sb in mp['dtypes']:
                 dd_nrf = mp['dtypes'][dtype_sb]
-                sm.append(self.count_discount_sum(dd_nrf.percentage,
-                    sm[0], mp['discounts'][dtype_sb]))
+                disc_days = self.apply_discount_for_days(dd_nrf.percentage,
+                    day_prices, mp['discounts'][dtype_sb])
+                sm.append(sum(disc_days))
             else:
                 sm.append(sm[0])
 
@@ -497,12 +498,13 @@ class Room(AbstractName):
         sm = []
         if dtype in mp['dtypes']:
             dd = mp['dtypes'][dtype]
-            sm.append(self.count_discount_sum(dd.percentage,
-                mp['prices'], mp['discounts'][dtype]))
-            self.apply_discount_group1(mp, dd, sm)
+            disc_days = self.apply_discount_for_days(dd.percentage,
+                mp['prices'], mp['discounts'][dtype])
+            sm.append(sum(disc_days))
+            self.apply_discount_group1(mp, dd, sm, disc_days)
         else:
             sm.append(pp_sum)
-            self.apply_discount_group1(mp, None, sm, check_applicable=False)
+            self.apply_discount_group1(mp, None, sm, check_apply=False)
         return sm
 
     def get_price_discount(self, date_in, date_out, guests):
