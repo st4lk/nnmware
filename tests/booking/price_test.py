@@ -36,10 +36,11 @@ class BasePriceTestCase(BaseTestCase):
             self.day2: [(self.stl1, 11), (self.stl2, 12), (self.stl3, 13)],
             self.day3: [(self.stl1, 14), (self.stl2, 15), (self.stl3, 16)],
         }
+        self.cr = mommy.make('money.Currency', code='USD')
         for date, prices in day_price.items():
             for stl, price in prices:
                 mommy.make('booking.PlacePrice', date=date,
-                    amount=price, settlement=stl)
+                    amount=price, settlement=stl, currency=self.cr)
 
 
 class PriceTestCase(BasePriceTestCase):
@@ -71,3 +72,37 @@ class PriceTestCase(BasePriceTestCase):
                 settlement=pp.settlement.pk))
         self.assertFalse(f.is_valid())
         self.assertIn(u'already exists', f.errors['__all__'][0])
+
+
+class DiscountTestCase(BasePriceTestCase):
+    def setUp(self):
+        super(DiscountTestCase, self).setUp()
+        self.dnorm = mommy.make('booking.Discount', choice=DISCOUNT_NORMAL,
+            hotel=self.hotel)
+        discounts = {
+            self.day1: [
+                dict(discount=self.dnorm, value=25),
+            ],
+            self.day2: [
+                dict(discount=self.dnorm, value=15),
+            ],
+            self.day3: [
+                dict(discount=self.dnorm, value=10),
+            ],
+        }
+        for date, d_list in discounts.items():
+            for d_kwargs in d_list:
+                mommy.make('booking.RoomDiscount', date=date,
+                    room=self.room, **d_kwargs)
+
+    def test_normal_d1(self):
+        prices = self.room.get_price_discount(self.day1, self.day2, 1)
+        self.assertEqual(prices, [D('7.5'), D('7.5'), D('7.5')])
+
+    def test_normal_d2(self):
+        prices = self.room.get_price_discount(self.day1, self.day3, 1)
+        self.assertEqual(prices, [D('16.85'), D('16.85'), D('16.85')])
+
+    def test_normal_d3(self):
+        prices = self.room.get_price_discount(self.day1, self.day4, 1)
+        self.assertEqual(prices, [D('29.45'), D('29.45'), D('29.45')])

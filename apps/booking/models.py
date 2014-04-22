@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from decimal import Decimal
+from decimal import Decimal as D
+from collections import defaultdict
 from uuid import uuid4
 import random
 from django.db import models
@@ -18,6 +19,34 @@ from nnmware.apps.address.models import AbstractGeo, Tourism, City
 from nnmware.apps.money.models import MoneyBase
 from nnmware.core.abstract import AbstractIP, AbstractName, AbstractDate
 from nnmware.core.maps import places_near_object
+
+
+DISCOUNT_UNKNOWN = 0
+DISCOUNT_NOREFUND = 1
+DISCOUNT_EARLY = 2
+DISCOUNT_LATER = 3
+DISCOUNT_PERIOD = 4
+DISCOUNT_PACKAGE = 5
+DISCOUNT_HOLIDAY = 6
+DISCOUNT_SPECIAL = 7
+DISCOUNT_LAST_MINUTE = 8
+DISCOUNT_CREDITCARD = 9
+DISCOUNT_NORMAL = 10
+
+
+DISCOUNT_CHOICES = (
+    (DISCOUNT_UNKNOWN, _("No discount")),
+    (DISCOUNT_NOREFUND, _("Non-return rate")),
+    (DISCOUNT_EARLY, _("Early booking")),
+    (DISCOUNT_LATER, _("Later booking")),
+    (DISCOUNT_PERIOD, _("Booking on nights count")),
+    (DISCOUNT_PACKAGE, _("Package discount")),
+    (DISCOUNT_HOLIDAY, _("Holidays discount")),
+    (DISCOUNT_SPECIAL, _("Special discount")),
+    (DISCOUNT_LAST_MINUTE, _("Last minute discount")),
+    (DISCOUNT_CREDITCARD, _("Creditcard booking discount")),
+    (DISCOUNT_NORMAL, _("Normal discount")),
+)
 
 
 class HotelPoints(models.Model):
@@ -400,14 +429,98 @@ class Room(AbstractName):
     def min_current_amount(self):
         return self.amount_on_date(now())
 
-    def get_price(self, date_in, date_out, guests):
+    def get_price_sum(self, prices):
+        return prices.aggregate(total_amount=Sum('amount'))['total_amount']
+
+    def get_price(self, date_in, date_out, guests, as_models=False):
         """
         Return price without discount. None means room is not avaliable.
         """
         pp = PlacePrice.objects.filter(settlement__room=self,
             settlement__enabled=True, settlement__settlement=guests,
             date__gte=date_in, date__lt=date_out)
-        return pp.aggregate(total_amount=Sum('amount'))['total_amount']
+        # TODO, check, if len(pp) != days count, then probably booking is not avaliable
+        if as_models:
+            return pp
+        else:
+            return self.get_price_sum(pp)
+
+    def map_price_discount(self, prices, discounts):
+        # here is assumed, that for given type of discount params are the same.
+        # Exmaple: normal discount. If its value is in percent, then
+        # for dates are used percent. It is not acceptable, that in
+        # may 1 discount is in %, and may 2 discount is exact value
+        # TODO: ask (look Discount unique_together)
+        mp = {'prices': [], 'discounts': defaultdict(lambda: [0]*len(prices)),
+            'dates': [], 'dtypes': {}}
+        dates = {}
+        for cnt, p in enumerate(prices):
+            mp['prices'].append(p.amount)
+            mp['dates'].append(p.date)
+            dates[p.date] = cnt
+        for d in discounts:
+            dtype = d.discount.choice
+            mp['discounts'][dtype][dates[d.date]] = d.value
+            mp["dtypes"][dtype] = d.discount
+        return mp
+
+    @staticmethod
+    def d_percentage(price_disc):
+        return price_disc[0] - price_disc[0] * (price_disc[1]/D('100'))
+
+    @staticmethod
+    def d_amout(price_disc):
+        return price_disc[0] - price_disc[1]
+
+    @classmethod
+    def count_discount_sum(cls, is_percentage, p_list, d_list):
+        func = cls.d_percentage if is_percentage else cls.d_amout
+        return sum(map(func, zip(p_list, d_list)))
+
+    def apply_discount_group1(self, mp, discount, sm, check_applicable=True):
+        if check_applicable:
+            apply_nrf = discount.apply_norefund
+            apply_crd = discount.apply_creditcard
+        else:
+            apply_nrf, apply_crd = True, True
+        for dtype_sb, is_apply in [(DISCOUNT_NOREFUND, apply_nrf),
+                (DISCOUNT_CREDITCARD, apply_crd)]:
+            if is_apply and dtype_sb in mp['dtypes']:
+                dd_nrf = mp['dtypes'][dtype_sb]
+                sm.append(self.count_discount_sum(dd_nrf.percentage,
+                    sm[0], mp['discounts'][dtype_sb]))
+            else:
+                sm.append(sm[0])
+
+    def get_price_discount_group5(self, mp, pp_sum):
+        dtype = DISCOUNT_NORMAL
+        sm = []
+        if dtype in mp['dtypes']:
+            dd = mp['dtypes'][dtype]
+            sm.append(self.count_discount_sum(dd.percentage,
+                mp['prices'], mp['discounts'][dtype]))
+            self.apply_discount_group1(mp, dd, sm)
+        else:
+            sm.append(pp_sum)
+            self.apply_discount_group1(mp, None, sm, check_applicable=False)
+        return sm
+
+    def get_price_discount(self, date_in, date_out, guests):
+        ds = self.get_discounts(date_in, date_out)
+        pp = self.get_price(date_in, date_out, guests, as_models=True)\
+            .order_by('date')
+        if not ds:
+            return self.get_price_sum(pp)
+        if not pp:
+            return None
+        pp_sum = self.get_price_sum(pp)  # maybe count in python (to not call db)
+        mp = self.map_price_discount(pp, ds)
+        g5 = self.get_price_discount_group5(mp, pp_sum)
+        return g5
+
+    def get_discounts(self, date_in, date_out):
+        return self.discounts.select_related('discount')\
+            .filter(date__gte=date_in, date__lt=date_out)
 
     def amount_on_date(self, on_date, guests=None):
         result = PlacePrice.objects.filter(settlement__room=self, settlement__enabled=True, date=on_date).\
@@ -634,34 +747,6 @@ class Availability(models.Model):
             place=self.room.name, hotel=self.room.hotel.name, date=self.date, count=self.placecount)
 
 
-DISCOUNT_UNKNOWN = 0
-DISCOUNT_NOREFUND = 1
-DISCOUNT_EARLY = 2
-DISCOUNT_LATER = 3
-DISCOUNT_PERIOD = 4
-DISCOUNT_PACKAGE = 5
-DISCOUNT_HOLIDAY = 6
-DISCOUNT_SPECIAL = 7
-DISCOUNT_LAST_MINUTE = 8
-DISCOUNT_CREDITCARD = 9
-DISCOUNT_NORMAL = 10
-
-
-DISCOUNT_CHOICES = (
-    (DISCOUNT_UNKNOWN, _("No discount")),
-    (DISCOUNT_NOREFUND, _("Non-return rate")),
-    (DISCOUNT_EARLY, _("Early booking")),
-    (DISCOUNT_LATER, _("Later booking")),
-    (DISCOUNT_PERIOD, _("Booking on nights count")),
-    (DISCOUNT_PACKAGE, _("Package discount")),
-    (DISCOUNT_HOLIDAY, _("Holidays discount")),
-    (DISCOUNT_SPECIAL, _("Special discount")),
-    (DISCOUNT_LAST_MINUTE, _("Last minute discount")),
-    (DISCOUNT_CREDITCARD, _("Creditcard booking discount")),
-    (DISCOUNT_NORMAL, _("Normal discount")),
-)
-
-
 @python_2_unicode_compatible
 class Discount(AbstractName, AbstractDate):
     hotel = models.ForeignKey(Hotel, verbose_name=_('Hotel'))
@@ -678,6 +763,8 @@ class Discount(AbstractName, AbstractDate):
     apply_period = models.BooleanField(verbose_name=_('Apply period discount'), default=False, db_index=True)
 
     class Meta:
+        # TODO: ask & make migration
+        unique_together = ('hotel', 'choice')
         ordering = ['-pk', ]
         verbose_name = _("Discount")
         verbose_name_plural = _("Discounts")
@@ -726,7 +813,8 @@ class Discount(AbstractName, AbstractDate):
 class RoomDiscount(models.Model):
     date = models.DateField(verbose_name=_("On date"), db_index=True)
     discount = models.ForeignKey(Discount, verbose_name=_("Discount of hotel's"))
-    room = models.ForeignKey(Room, verbose_name=_("Room of hotel's"))
+    room = models.ForeignKey(Room, related_name='discounts',
+        verbose_name=_("Room of hotel's"))
     value = models.DecimalField(verbose_name=_('Value of discount'), default=0, max_digits=20, decimal_places=3,
                                 db_index=True)
 
@@ -789,11 +877,11 @@ def update_hotel_point(sender, instance, **kwargs):
     hotel = instance.hotel
     all_points = Review.objects.filter(hotel=hotel).aggregate(Avg('food'), Avg('service'),
                                                               Avg('purity'), Avg('transport'), Avg('prices'))
-    hotel.food = Decimal(str(all_points['food__avg'])).quantize(Decimal('1.0'))
-    hotel.service = Decimal(str(all_points['service__avg'])).quantize(Decimal('1.0'))
-    hotel.purity = Decimal(str(all_points['purity__avg'])).quantize(Decimal('1.0'))
-    hotel.transport = Decimal(str(all_points['transport__avg'])).quantize(Decimal('1.0'))
-    hotel.prices = Decimal(str(all_points['prices__avg'])).quantize(Decimal('1.0'))
+    hotel.food = D(str(all_points['food__avg'])).quantize(D('1.0'))
+    hotel.service = D(str(all_points['service__avg'])).quantize(D('1.0'))
+    hotel.purity = D(str(all_points['purity__avg'])).quantize(D('1.0'))
+    hotel.transport = D(str(all_points['transport__avg'])).quantize(D('1.0'))
+    hotel.prices = D(str(all_points['prices__avg'])).quantize(D('1.0'))
     h_point = (hotel.food + hotel.service + hotel.purity + hotel.transport + hotel.prices) / 5
     hotel.point = h_point
     hotel.save()
@@ -801,5 +889,3 @@ def update_hotel_point(sender, instance, **kwargs):
 
 signals.post_save.connect(update_hotel_point, sender=Review, dispatch_uid="nnmware_id")
 signals.post_delete.connect(update_hotel_point, sender=Review, dispatch_uid="nnmware_id")
-
-
