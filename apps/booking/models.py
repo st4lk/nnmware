@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 from decimal import Decimal as D
 from collections import defaultdict
 from uuid import uuid4
@@ -47,6 +46,9 @@ DISCOUNT_CHOICES = (
     (DISCOUNT_CREDITCARD, _("Creditcard booking discount")),
     (DISCOUNT_NORMAL, _("Normal discount")),
 )
+
+DISCOUNT_GROUP1 = (DISCOUNT_NOREFUND, DISCOUNT_CREDITCARD)
+DISCOUNT_GROUP5 = (DISCOUNT_NORMAL, DISCOUNT_SPECIAL, DISCOUNT_HOLIDAY)
 
 
 class HotelPoints(models.Model):
@@ -477,35 +479,50 @@ class Room(AbstractName):
         func = cls.d_percentage if is_percentage else cls.d_amout
         return map(func, zip(p_list, d_list))
 
-    def apply_discount_group1(self, mp, discount, sm, day_prices, check_apply=True):
-        if check_apply:
-            apply_nrf = discount.apply_norefund
-            apply_crd = discount.apply_creditcard
-        else:
-            apply_nrf, apply_crd = True, True
-        for dtype_sb, is_apply in [(DISCOUNT_NOREFUND, apply_nrf),
-                (DISCOUNT_CREDITCARD, apply_crd)]:
-            if is_apply and dtype_sb in mp['dtypes']:
-                dd_nrf = mp['dtypes'][dtype_sb]
-                disc_days = self.apply_discount_for_days(dd_nrf.percentage,
+    def apply_discount_group1(self, mp, discount, sm, day_prices):
+        d_used = []
+        for dtype_sb in DISCOUNT_GROUP1:
+            if dtype_sb in mp['dtypes']:
+                dd_gr1 = mp['dtypes'][dtype_sb]
+                disc_days = self.apply_discount_for_days(dd_gr1.percentage,
                     day_prices, mp['discounts'][dtype_sb])
                 sm.append(sum(disc_days))
+                d_used.append(dd_gr1)
             else:
                 sm.append(sm[0])
+                d_used.append(None)
+        return d_used
+
+    @staticmethod
+    def find_min_price_index(all_sums, price_type_index):
+        return min(enumerate(all_sums),
+            key=lambda als: als[1][price_type_index])[0]
 
     def get_price_discount_group5(self, mp, pp_sum):
-        dtype = DISCOUNT_NORMAL
-        sm = []
-        if dtype in mp['dtypes']:
-            dd = mp['dtypes'][dtype]
-            disc_days = self.apply_discount_for_days(dd.percentage,
-                mp['prices'], mp['discounts'][dtype])
-            sm.append(sum(disc_days))
-            self.apply_discount_group1(mp, dd, sm, disc_days)
-        else:
-            sm.append(pp_sum)
-            self.apply_discount_group1(mp, None, sm, check_apply=False)
-        return sm
+        all_sums = []
+        all_discounts_used = []
+        for dtype in DISCOUNT_GROUP5:
+            if dtype in mp['dtypes']:
+                sm, disc_used = [], []
+                dd = mp['dtypes'][dtype]
+                disc_days = self.apply_discount_for_days(dd.percentage,
+                    mp['prices'], mp['discounts'][dtype])
+                sm.append(sum(disc_days))
+                # here check other applicable discounts: apply_package, apply_period
+                if dd.apply_norefund or dd.apply_creditcard:
+                    self.apply_discount_group1(mp, dd, sm, disc_days)
+                else:
+                    sm = sm[0]*3
+                disc_used.append(dd)
+                all_discounts_used.append(disc_used)
+                all_sums.append(sm)
+        # find minimals
+        sm, disc_used = [], []
+        for i in xrange(3):
+            p_index = self.find_min_price_index(all_sums, i)
+            sm.append(all_sums[p_index][i])
+            disc_used.append(all_discounts_used[p_index])
+        return sm, disc_used
 
     def get_price_discount(self, date_in, date_out, guests):
         ds = self.get_discounts(date_in, date_out)
@@ -517,8 +534,8 @@ class Room(AbstractName):
             return None
         pp_sum = self.get_price_sum(pp)  # maybe count in python (to not call db)
         mp = self.map_price_discount(pp, ds)
-        g5 = self.get_price_discount_group5(mp, pp_sum)
-        return g5
+        g5_prices, gt_disc_used = self.get_price_discount_group5(mp, pp_sum)
+        return g5_prices
 
     def get_discounts(self, date_in, date_out):
         return self.discounts.select_related('discount')\
