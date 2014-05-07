@@ -480,9 +480,13 @@ class Room(AbstractName):
         return map(func, zip(p_list, d_list))
 
     def apply_discount_group1(self, mp, discount, sm, day_prices):
+        is_apply = {
+            DISCOUNT_NOREFUND: discount.apply_norefund,
+            DISCOUNT_CREDITCARD: discount.apply_creditcard,
+        }
         d_used = []
         for dtype_sb in DISCOUNT_GROUP1:
-            if dtype_sb in mp['dtypes']:
+            if dtype_sb in mp['dtypes'] and is_apply[dtype_sb]:
                 dd_gr1 = mp['dtypes'][dtype_sb]
                 disc_days = self.apply_discount_for_days(dd_gr1.percentage,
                     day_prices, mp['discounts'][dtype_sb])

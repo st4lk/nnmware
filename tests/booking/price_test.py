@@ -74,32 +74,19 @@ class PriceTestCase(BasePriceTestCase):
         self.assertIn(u'already exists', f.errors['__all__'][0])
 
 
-class DiscountTestCase(BasePriceTestCase):
+class NormalDiscountTestCase(BasePriceTestCase):
     def setUp(self):
-        super(DiscountTestCase, self).setUp()
+        super(NormalDiscountTestCase, self).setUp()
         self.disc_norm = mommy.make('booking.Discount', choice=DISCOUNT_NORMAL,
             hotel=self.hotel, apply_norefund=True, apply_creditcard=True)
         self.disc_norfd = mommy.make('booking.Discount', choice=DISCOUNT_NOREFUND,
             hotel=self.hotel, percentage=False)
         self.disc_card = mommy.make('booking.Discount', choice=DISCOUNT_CREDITCARD,
             hotel=self.hotel, percentage=True)
-        discounts = {
-            self.day1: [
-                dict(discount=self.disc_norm, value=25),
-            ],
-            self.day2: [
-                dict(discount=self.disc_norm, value=15),
-            ],
-            self.day3: [
-                dict(discount=self.disc_norm, value=10),
-            ],
-        }
-        for date, d_list in discounts.items():
-            for d_kwargs in d_list:
-                mommy.make('booking.RoomDiscount', date=date,
-                    room=self.room, **d_kwargs)
+        mp = (self.day1, D('25')), (self.day2, D('15')), (self.day3, D('10'))
+        self.create_discount(self.disc_norm, mp)
 
-    def create_additional_discount(self, discount, mp):
+    def create_discount(self, discount, mp):
         for date, value in (mp):
             mommy.make('booking.RoomDiscount', date=date,
                 room=self.room, discount=discount, value=value)
@@ -126,16 +113,42 @@ class DiscountTestCase(BasePriceTestCase):
 
     def test_normal_d2_g2_norefund(self):
         mp = (self.day1, D('0.5')), (self.day2, D('0.6'))
-        self.create_additional_discount(self.disc_norfd, mp)
+        self.create_discount(self.disc_norfd, mp)
         prices = self.room.get_price_discount(self.day1, self.day3, 2)
         self.assertEqual(prices, [D('21.45'), D('20.35'), D('21.45')])
 
     def test_normal_d2_g2_norefund_card(self):
         # NOREFUND discount
         mp = (self.day1, D('0.5')), (self.day2, D('0.6'))
-        self.create_additional_discount(self.disc_norfd, mp)
+        self.create_discount(self.disc_norfd, mp)
         # CREDITCARD discount
         mp = (self.day1, D('5')), (self.day2, D('7'))
-        self.create_additional_discount(self.disc_card, mp)
+        self.create_discount(self.disc_card, mp)
         prices = self.room.get_price_discount(self.day1, self.day3, 2)
         self.assertEqual(prices, [D('21.45'), D('20.35'), D('20.1735')])
+
+    def test_multi_group5(self):
+        self.disc_norm.apply_norefund = False
+        self.disc_norm.save()
+        disc_spec = mommy.make('booking.Discount', choice=DISCOUNT_SPECIAL,
+            hotel=self.hotel, apply_norefund=True, apply_creditcard=False)
+        # SPECIAL discount
+        mp = (self.day1, D('25')), (self.day2, D('15')), (self.day3, D('10'))
+        self.create_discount(disc_spec, mp)
+        # NOREFUND discount
+        mp = (self.day1, D('0.5')), (self.day2, D('2'))
+        self.create_discount(self.disc_norfd, mp)
+        # CREDITCARD discount
+        mp = (self.day1, D('5')), (self.day2, D('7'))
+        self.create_discount(self.disc_card, mp)
+
+        prices = self.room.get_price_discount(self.day1, self.day3, 2)
+        # (15*(1-0.25)) + (12*(1-0.15)) = 21.45 - discount special
+        # (15*(1-0.25)) + (12*(1-0.15)) = 21.45 - discount norm
+
+        # (15*(1-0.25)-0.5) + (12*(1-0.15)-2) = 18.95 - discount special & norefund
+        # (15*(1-0.25)) + (12*(1-0.15)) = 21.45 - discount norm & norefund
+
+        # (15*(1-0.25)) + (12*(1-0.15)) = 21.45 - discount special
+        # (15*(1-0.25))*(1-0.05) + (12*(1-0.15))*(1-0.07) = 20.1735 - discount norm & card
+        self.assertEqual(prices, [D('21.45'), D('18.95'), D('20.1735')])
