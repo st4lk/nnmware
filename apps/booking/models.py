@@ -466,6 +466,31 @@ class Room(AbstractName):
             return self.get_price_sum(pp)
 
     def map_price_discount(self, prices, discounts):
+        """
+        Returns mapping:
+                          +-----------+-------------+-------------+
+        dates (list):     | date1     | date2       | date3       |
+                          +-----------+-------------+-------------+
+        price (list):     | price1    | price2      | price 3     |
+                          +-----------+-------------+-------------+
+        discount (dict of lists):
+                          +-----------+-------------+-------------+
+        discount_choice1: | discount1 | discount2   | discount3   |
+                          +-----------+-------------+-------------+
+        discount_choice2: | discount4 | discount5   | discount6   |
+                          +-----------+-------------+-------------+
+            ...           | ...       | ...         | ...         |
+                          +-----------+-------------+-------------+
+        discount_choiceN: | discountN | discountN+1 | discountN+2 |
+                          +-----------+-------------+-------------+
+        dtypes (dict, key: discount choice, value: Discount object):
+            {
+                discount_choice1: discount_object1,
+                discount_choice2: discount_object2,
+                ...
+                discount_choiceN: discount_objectN,
+            }
+        """
         # here is assumed, that for given type of discount params are the same.
         # Exmaple: normal discount. If its value is in percent, then
         # for dates are used percent. It is not acceptable, that in
