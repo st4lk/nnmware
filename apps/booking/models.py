@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import warnings
 from decimal import Decimal as D
 from collections import defaultdict
 from uuid import uuid4
@@ -7,6 +8,7 @@ from django.db import models
 from django.conf import settings
 from django.db.models import permalink, signals, Avg, Min, Sum
 from django.db.models.manager import Manager
+from django.db.models.query import QuerySet
 from django.template.defaultfilters import date
 from django.utils.timezone import now
 from django.utils.translation import ugettext_lazy as _, string_concat
@@ -437,10 +439,26 @@ class Room(AbstractName):
     def get_price(self, date_in, date_out, guests, as_models=False):
         """
         Return price without discount. None means room is not avaliable.
+        Guests can be a int value, or a queryset. If it a queryset, then
+        be sure, that result length of that is 1, or you'll accept
+        wrong result. Also it is asserted, that guests queryset already
+        filtered by enabled. Use `settlement_for_guests` method to
+        get needed value.
+        Advantage of queryset: it will be run as subquery and as a result
+        only one query will be executed.
         """
-        pp = PlacePrice.objects.filter(settlement__room=self,
-            settlement__enabled=True, settlement__settlement=guests,
-            date__gte=date_in, date__lt=date_out)
+        query_params = dict(
+            settlement__room=self,
+            date__gte=date_in,
+            date__lt=date_out,
+        )
+        if isinstance(guests, QuerySet):
+            # assert that guests queryset already filtered by 'enabled'
+            query_params['settlement__settlement__in'] = guests
+        else:
+            query_params['settlement__settlement'] = guests
+            query_params['settlement__enabled'] = True
+        pp = PlacePrice.objects.filter(**query_params)
         # TODO, check, if len(pp) != days count, then probably booking is not avaliable
         if as_models:
             return pp
@@ -530,7 +548,8 @@ class Room(AbstractName):
 
     def get_price_discount(self, date_in, date_out, guests):
         ds = self.get_discounts(date_in, date_out)
-        pp = self.get_price(date_in, date_out, guests, as_models=True)\
+        guests_avaliable = self.settlement_for_guests(guests)
+        pp = self.get_price(date_in, date_out, guests_avaliable, as_models=True)\
             .order_by('date')
         if not ds:
             return self.get_price_sum(pp)
@@ -567,7 +586,19 @@ class Room(AbstractName):
         except:
             return None
 
+    def settlement_for_guests(self, guests):
+        """
+        Returns QuerySet, that contains zero or one SettlementVariant with
+        avaliable settlement equal or greater to given guests amount.
+        """
+        result = SettlementVariant.objects.filter(
+            room=self, enabled=True, settlement__gte=guests)\
+            .order_by('settlement')[:1].all()
+        return result
+
     def settlement_on_date_for_guests(self, on_date, guests):
+        warnings.warn(("settlement_on_date_for_guests method is deprecated. "
+            "Use settlement_for_guests instead"))
         result = SettlementVariant.objects.filter(room=self, enabled=True, settlement__gte=guests).\
             aggregate(Min('settlement'))
         return result['settlement__min']

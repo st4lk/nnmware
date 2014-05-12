@@ -222,6 +222,10 @@ def room_price_average(context, room, rate):
     all_sum = PlacePrice.objects.filter(settlement__room=room, settlement__settlement=s, date__range=date_period).\
         aggregate(Sum('amount'))
     room_sum = all_sum['amount__sum']
+    # TODO: above 4 lines can be replaced with the following,
+    # and only one query will be executed (with subquery):
+    # s = room.settlement_for_guests(guests)
+    # all_sum = room.get_price(from_date, to_date, s)
     result = room_sum / delta
     return convert_to_client_currency(result, rate)
 
@@ -232,7 +236,6 @@ def room_full_amount(context, room, rate):
     settlement = SettlementVariant.objects.filter(room=room, settlement__gte=guests,
         placeprice__date__range=date_period, placeprice__amount__gt=0).annotate(valid_s=Count('pk')).\
         filter(valid_s__gte=delta).order_by('settlement').values_list('pk', flat=True).distinct()[0]
-
 
     result = PlacePrice.objects.filter(settlement__room=room, settlement__pk=settlement,
                                        date__range=date_period).aggregate(Sum('amount'))['amount__sum']

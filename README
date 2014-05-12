@@ -79,3 +79,27 @@ login and enjoy.
 you may disable django-grappelli in settings.py
 
 
+============================================
+RUN TESTS
+============================================
+
+Install dependencies from requirements.txt
+
+    pip install -r requirements.txt
+
+Either run with django test runner:
+
+    # run all tests
+    python manage.py test --settings=settings_test
+
+    # run specific test
+    python manage.py test tests.booking.test_price.PriceTestCase.test_price_days --settings=settings_test
+
+
+Either use py.test:
+
+    # run all tests
+    py.test
+
+    # run tests matching pattern
+    py.test -k "test_price_days"

@@ -62,9 +62,11 @@ class PriceTestCase(BasePriceTestCase):
             {'day_in': d1, 'day_out': d4, "guests": 3, "total": None},
         ]
         for cnt, p in enumerate(prices):
-            price = self.room.get_price(date_in=p['day_in'],
-                date_out=p['day_out'], guests=p['guests'])
-            self.assertEqual(price, p['total'])
+            with self.assertNumQueries(1):
+                guests_avaliable = self.room.settlement_for_guests(p['guests'])
+                price = self.room.get_price(date_in=p['day_in'],
+                    date_out=p['day_out'], guests=guests_avaliable)
+                self.assertEqual(price, p['total'])
 
     def test_price_unique(self):
         pp = PlacePrice.objects.all()[0]
