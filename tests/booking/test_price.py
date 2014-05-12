@@ -42,6 +42,11 @@ class BasePriceTestCase(BaseTestCase):
                 mommy.make('booking.PlacePrice', date=date,
                     amount=price, settlement=stl, currency=self.cr)
 
+    def create_discount(self, discount, mp):
+        for date, value in (mp):
+            mommy.make('booking.RoomDiscount', date=date,
+                room=self.room, discount=discount, value=value)
+
 
 class PriceTestCase(BasePriceTestCase):
 
@@ -87,11 +92,6 @@ class NormalDiscountTestCase(BasePriceTestCase):
             hotel=self.hotel, percentage=True)
         mp = (self.day1, D('25')), (self.day2, D('15')), (self.day3, D('10'))
         self.create_discount(self.disc_norm, mp)
-
-    def create_discount(self, discount, mp):
-        for date, value in (mp):
-            mommy.make('booking.RoomDiscount', date=date,
-                room=self.room, discount=discount, value=value)
 
     def test_normal_d1_g1(self):
         prices = self.room.get_price_discount(self.day1, self.day2, 1)
@@ -154,3 +154,89 @@ class NormalDiscountTestCase(BasePriceTestCase):
         # (15*(1-0.25)) + (12*(1-0.15)) = 21.45 - discount special
         # (15*(1-0.25))*(1-0.05) + (12*(1-0.15))*(1-0.07) = 20.1735 - discount norm & card
         self.assertEqual(prices, [D('21.45'), D('18.95'), D('20.1735')])
+
+
+class NormalPackageDiscountTestCase(BasePriceTestCase):
+    def setUp(self):
+        super(NormalPackageDiscountTestCase, self).setUp()
+        self.disc_norm = mommy.make('booking.Discount', choice=DISCOUNT_NORMAL,
+            hotel=self.hotel, apply_norefund=True, apply_creditcard=True,
+            apply_package=True)
+        self.disc_norfd = mommy.make('booking.Discount', choice=DISCOUNT_NOREFUND,
+            hotel=self.hotel, percentage=True)
+        self.disc_card = mommy.make('booking.Discount', choice=DISCOUNT_CREDITCARD,
+            hotel=self.hotel, percentage=True)
+        self.disc_pckg = mommy.make('booking.Discount', choice=DISCOUNT_PACKAGE,
+            hotel=self.hotel, percentage=False, apply_creditcard=True,
+            apply_package=True)
+
+    def test_normal_packet_norefund_card(self):
+        # NORMAL DISCOUNT
+        mp = (self.day1, D('12')), (self.day2, D('15')), (self.day3, D('10'))
+        self.create_discount(self.disc_norm, mp)
+        # PACKAGE discount
+        mp = (self.day1, D('3.5')), (self.day2, D('0.4')), (self.day3, D('0.6'))
+        self.create_discount(self.disc_pckg, mp)
+        # NOREFUND discount
+        mp = (self.day1, D('3')), (self.day2, D('2'))
+        self.create_discount(self.disc_norfd, mp)
+        # CREDITCARD discount
+        mp = (self.day1, D('5')), (self.day2, D('4'))
+        self.create_discount(self.disc_card, mp)
+
+        prices = self.room.get_price_discount(self.day1, self.day3, 1)
+        # 10*(1-0.12)-2.5 + 11*(1-0.15)-0.4 = 15.25 - norm & package
+        # (10*(1-0.12)-2.5)*(1-0.03) + (11*(1-0.15)-0.4)*(1-0.02) = 14.882 - norm & package & norefund
+        # (10*(1-0.12)-2.5)*(1-0.05) + (11*(1-0.15)-0.4)*(1-0.04) = 14.577 - norm & package & card
+        self.assertEqual(prices, [D('15.25'), D('14.882'), D('14.577')])
+
+    def test_normal_sep_packet_norefund_card(self):
+        # NORMAL DISCOUNT
+        mp = (self.day1, D('12')), (self.day2, D('15')), (self.day3, D('10'))
+        self.create_discount(self.disc_norm, mp)
+        # PACKAGE discount
+        mp = (self.day1, D('3.5')), (self.day2, D('0.4')), (self.day3, D('0.6'))
+        self.create_discount(self.disc_pckg, mp)
+        # NOREFUND discount
+        mp = (self.day1, D('3')), (self.day2, D('2'))
+        self.create_discount(self.disc_norfd, mp)
+        # CREDITCARD discount
+        mp = (self.day1, D('5')), (self.day2, D('4'))
+        self.create_discount(self.disc_card, mp)
+
+        self.disc_norm.apply_package = False
+        self.disc_norm.save()
+        self.disc_pckg.apply_norefund = False
+        self.disc_norm.save()
+        prices = self.room.get_price_discount(self.day1, self.day3, 1)
+        # 10*(1-0.12) + 11*(1-0.15) = 18.15 - discount norm
+        # 10*(1-0.12)*(1-0.03) + 11*(1-0.15)*(1-0.02) = 17.699 - norm & norefund
+        # 10*(1-0.12)*(1-0.05) + 11*(1-0.15)*(1-0.04) = 17.336 - norm & card
+
+        # 10-2.5 + 11-0.4 = 18.1 - package
+        # 10-2.5 + 11-0.4 = 18.1 - package & norefund (not applicable)
+        # (10-2.5)*(1-0.05) + (11-0.4)*(1-0.04) = 17.301 - package & card (not applicable)
+        self.assertEqual(prices, [D('18.1'), D('17.699'), D('17.301')])
+
+    def test_normal_packet_no_norefund_no_card(self):
+        # NORMAL DISCOUNT
+        mp = (self.day1, D('12')), (self.day2, D('15')), (self.day3, D('10'))
+        self.create_discount(self.disc_norm, mp)
+        # PACKAGE discount
+        mp = (self.day1, D('3.5')), (self.day2, D('0.4')), (self.day3, D('0.6'))
+        self.create_discount(self.disc_pckg, mp)
+        # NOREFUND discount
+        mp = (self.day1, D('30')), (self.day2, D('40'))
+        self.create_discount(self.disc_norfd, mp)
+        # CREDITCARD discount
+        mp = (self.day1, D('5')), (self.day2, D('4'))
+        self.create_discount(self.disc_card, mp)
+
+        self.disc_pckg.apply_norefund = False
+        self.disc_norm.save()
+        prices = self.room.get_price_discount(self.day1, self.day3, 1)
+        # 10*(1-0.12)-2.5 + 11*(1-0.15)-0.4 = 15.25 - norm & package
+        # 10*(1-0.12)*(1-0.3) + 11*(1-0.15)*(1-0.4) = 11.77 - norm & norefund
+        # (10*(1-0.12)-2.5)*(1-0.05) + (11*(1-0.15)-0.4)*(1-0.04) = 14.577 - norm & package & card
+
+        self.assertEqual(prices, [D('15.25'), D('11.77'), D('14.577')])
