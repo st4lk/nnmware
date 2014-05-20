@@ -263,7 +263,7 @@ class SinglePackageDiscountTestCase(BasePriceTestCase):
     def create_pckg(self, disc_pckg, days=7):
         mp = []
         for d in range(1, days+1):
-            mp.append((getattr(self, "day{0}".format(d))), 0)
+            mp.append((getattr(self, "day{0}".format(d)), 0))
         self.create_discount(disc_pckg, mp)
 
     def test_single_package_monotonic(self):
