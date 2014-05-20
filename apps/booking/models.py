@@ -565,10 +565,13 @@ class Room(AbstractName):
                 all_sums.append(sm)
         # find minimals
         sm, disc_used = [], []
-        for i in xrange(3):
-            p_index = self.find_min_price_index(all_sums, i)
-            sm.append(all_sums[p_index][i])
-            disc_used.append(all_discounts_used[p_index])
+        if all_sums:
+            for i in xrange(3):
+                p_index = self.find_min_price_index(all_sums, i)
+                sm.append(all_sums[p_index][i])
+                disc_used.append(all_discounts_used[p_index])
+        else:
+            sm = [pp_sum]*3
         return sm, disc_used
 
     def get_price_discount(self, date_in, date_out, guests):
